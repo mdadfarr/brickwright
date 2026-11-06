@@ -1,8 +1,95 @@
 """Tests for the finalization tool."""
 
+import sys
+import types
+
 import pytest
 
 from brickwright.tools import finalize, rendering
+from brickwright.tools.validation import REQUIRED_CHECKS_ENV
+
+
+@pytest.fixture
+def required_check(monkeypatch):
+    """Install ``fn`` as the only entry in ``BRICKWRIGHT_REQUIRED_CHECKS``."""
+
+    def _install(fn):
+        module = types.ModuleType("fake_required_checks")
+        module.check = fn
+        monkeypatch.setitem(sys.modules, "fake_required_checks", module)
+        monkeypatch.setenv(REQUIRED_CHECKS_ENV, "fake_required_checks:check")
+
+    return _install
+
+
+class TestRequiredChecks:
+    @pytest.fixture(autouse=True)
+    def _no_render(self, monkeypatch):
+        monkeypatch.setattr(rendering, "render_available", lambda: False)
+
+    def test_failing_required_check_blocks_finalize(
+        self, make_record, in_process, valid_build, required_check
+    ):
+        required_check(lambda ctx: ctx.check("only_owned_parts", False, "1 over"))
+        rec = make_record(valid_build)
+        report = finalize(rec)
+        assert not report.ok
+        assert report.validation is not None
+        assert report.validation.failed_checks == ["only_owned_parts"]
+        assert not rec.read_meta().finalized
+        assert not rec.ldr_path.exists()
+
+    def test_passing_required_check_allows_finalize(
+        self, make_record, in_process, valid_build, required_check
+    ):
+        required_check(lambda ctx: ctx.check("only_owned_parts", True))
+        rec = make_record(valid_build)
+        report = finalize(rec)
+        assert report.ok, report.error
+        assert "only_owned_parts" in [c.name for c in report.validation.checks]
+        assert rec.read_meta().finalized
+
+    def test_build_cannot_replace_a_required_check(
+        self, record, in_process, required_check
+    ):
+        required_check(lambda ctx: ctx.check("only_owned_parts", False, "1 over"))
+        record.write_build("""import bricklayer as bl
+from brickwright import TestContext
+def create_build():
+    m = bl.LegoBuild()
+    m.add(bl.brick(4, 2, color=bl.Color.RED))
+    return m
+def run_tests():
+    ctx = TestContext(create_build())
+    ctx.check("only_owned_parts", True)
+    return ctx.report()
+""")
+        report = finalize(record)
+        assert not report.ok
+        owned = [c for c in report.validation.checks if c.name == "only_owned_parts"]
+        assert len(owned) == 1 and not owned[0].passed
+
+    @pytest.mark.parametrize(
+        "target", ["no_such_module_xyz:check", "fake_required_checks:missing"]
+    )
+    def test_unloadable_required_check_fails_closed(
+        self, make_record, in_process, valid_build, required_check, monkeypatch, target
+    ):
+        required_check(lambda ctx: ctx.check("only_owned_parts", True))
+        monkeypatch.setenv(REQUIRED_CHECKS_ENV, target)
+        rec = make_record(valid_build)
+        report = finalize(rec)
+        assert not report.ok
+        assert report.validation.failed_checks == [target]
+
+    def test_required_check_that_records_nothing_fails_closed(
+        self, make_record, in_process, valid_build, required_check
+    ):
+        required_check(lambda ctx: None)
+        rec = make_record(valid_build)
+        report = finalize(rec)
+        assert not report.ok
+        assert report.validation.failed_checks == ["fake_required_checks:check"]
 
 
 class TestFinalize:

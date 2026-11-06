@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import io
+import os
 import traceback
 from collections.abc import Iterable
 from contextlib import redirect_stdout
@@ -18,6 +20,11 @@ from .testing import CheckResult, TestContext
 
 if TYPE_CHECKING:
     from bricklayer import LegoBuild
+
+# Comma-separated "module:function" checks that every validation must run, in
+# addition to no_floating and no_collisions. Each function is called with the
+# build's TestContext and must record at least one check on it.
+REQUIRED_CHECKS_ENV = "BRICKWRIGHT_REQUIRED_CHECKS"
 
 
 class BuildDimensions(BaseModel):
@@ -137,8 +144,11 @@ def _validate(build_path: str, source: str | None = None) -> ValidationReport:
 def build_and_validate(
     build_path: str, source: str | None = None
 ) -> tuple[LegoBuild | None, ValidationReport]:
-    """Create the build once, run custom tests, and enforce collision and support checks.
+    """Create the build once, run custom tests, and enforce the required checks.
 
+    The required checks are no_floating, no_collisions, and any listed in
+    ``BRICKWRIGHT_REQUIRED_CHECKS``. A custom test with the same name as a
+    required check is dropped, so a build cannot replace a required check.
     No-argument create_build calls in tests reuse the build being exported.
     Connectivity remains a custom check so multipart builds can choose its policy.
     """
@@ -156,6 +166,7 @@ def build_and_validate(
             physical = TestContext(build)
             physical.check_no_floating()
             physical.check_no_collisions()
+            _run_required_checks(physical)
             checks = physical.report()
             required = {check.name for check in checks}
             checks.extend(check for check in custom if check.name not in required)
@@ -166,6 +177,25 @@ def build_and_validate(
         return None, ValidationReport.error(
             traceback.format_exc(), stdout=_stdout(buf), error_type=type(exc).__name__
         )
+
+
+def _run_required_checks(ctx: TestContext) -> None:
+    """Run each check named in ``BRICKWRIGHT_REQUIRED_CHECKS`` against ``ctx``.
+
+    Fails closed: a check that cannot be imported, raises, or records nothing
+    becomes a failed check rather than being skipped.
+    """
+    targets = os.environ.get(REQUIRED_CHECKS_ENV, "").split(",")
+    for target in filter(None, (t.strip() for t in targets)):
+        before = len(ctx.report())
+        try:
+            module_name, _, attr = target.partition(":")
+            getattr(importlib.import_module(module_name), attr)(ctx)
+        except Exception:
+            ctx.check(target, False, traceback.format_exc(limit=3))
+            continue
+        if len(ctx.report()) == before:
+            ctx.check(target, False, "required check recorded no result")
 
 
 def _stdout(buf: io.StringIO) -> str:
