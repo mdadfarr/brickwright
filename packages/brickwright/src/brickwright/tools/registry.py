@@ -24,6 +24,7 @@ from .editing import (
     multi_edit_build,
     view,
 )
+from .expert import ask_expert, close_passed, expert_enabled
 from .exploration import explore
 from .finalization import finalize
 from .rendering import (
@@ -32,6 +33,7 @@ from .rendering import (
     render_available,
 )
 from .schemas import (
+    AskExpertArgs,
     DispatchArgs,
     EditBuildArgs,
     ExploreArgs,
@@ -58,6 +60,8 @@ def available_tools(config: Config | None = None) -> list[dict[str, Any]]:
         excluded.add("finalize")
     if config is None or not config.can_dispatch_subagents:
         excluded.add("dispatch_subagents")
+    if not expert_enabled():
+        excluded.add("ask_expert")
     return [tool for tool in _ALL_TOOLS if tool["function"]["name"] not in excluded]
 
 
@@ -172,7 +176,23 @@ def _multi_edit_build(
 
 
 def _validate(record: Record, config: Config, args: ValidateArgs) -> ToolOutcome:
-    return validation_outcome(validate(record, config))
+    report = validate(record, config)
+    outcome = validation_outcome(report)
+    if not expert_enabled() or report.build_error:
+        return outcome
+    close_passed(record, report.failed_checks)
+    if report.failed_checks:
+        outcome.content += (
+            f'\nTo get help: ask_expert(record_id="{record.id}", '
+            f'check="{report.failed_checks[0]}")'
+        )
+    return outcome
+
+
+def _ask_expert(record: Record, config: Config, args: AskExpertArgs) -> ToolOutcome:
+    """``config.max_cost`` is what is left of the run's budget (the loop sets it)."""
+    reply, ok, usage = ask_expert(record, config, args.record_id, args.check)
+    return ToolOutcome(reply, ok=ok, usage=usage)
 
 
 def _explore(record: Record, config: Config, args: ExploreArgs) -> ToolOutcome:
@@ -225,6 +245,7 @@ _TOOLS: dict[str, _Tool[Any]] = {
     "render": _Tool(RenderArgs, _render),
     "finalize": _Tool(FinalizeArgs, _finalize),
     "dispatch_subagents": _Tool(DispatchArgs, _dispatch),
+    "ask_expert": _Tool(AskExpertArgs, _ask_expert),
 }
 _ALL_TOOLS = [function_tool(name, tool.arguments) for name, tool in _TOOLS.items()]
 

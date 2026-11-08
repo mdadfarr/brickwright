@@ -208,7 +208,10 @@ def _run_tool_calls(run: _Run, tool_calls: list[Any]) -> None:
             continue
 
         name = tc.function.name
-        if name == "dispatch_subagents" and run.tracker.has_unknown_cost():
+        if (
+            name in ("dispatch_subagents", "ask_expert")
+            and run.tracker.has_unknown_cost()
+        ):
             run.transcript.append(
                 tool_call_message(tc, "skipped: cost is unknown; no further paid calls")
             )
@@ -223,8 +226,13 @@ def _run_tool_calls(run: _Run, tool_calls: list[Any]) -> None:
         arguments = tool_call_arguments(tc)
         run.narrator.tool_called(name, arguments)
         source = run.record.source_sha256
+        config = run.config
+        # ask_expert may spend only what is left of the run's budget.
+        if name == "ask_expert":
+            left = max(0.0, config.max_cost - run.tracker.cost())
+            config = config.model_copy(update={"max_cost": left})
         with run.tracker.time_tool(name):
-            outcome = run.runtime.execute_tool(run.record, run.config, name, arguments)
+            outcome = run.runtime.execute_tool(run.record, config, name, arguments)
         run.narrator.tool_finished(name, outcome)
         if run.record.source_sha256 != source:
             run.last_report = None
@@ -237,7 +245,9 @@ def _run_tool_calls(run: _Run, tool_calls: list[Any]) -> None:
         run.transcript.append(tool_call_message(tc, outcome))
         if outcome.image is not None:
             image = image_user_message(outcome.image)
-        if outcome.usage is not None:
+        if outcome.usage is not None and name == "ask_expert":
+            run.tracker.add_tool_usage(outcome.usage)
+        elif outcome.usage is not None:
             run.tracker.add_subagent_usage(outcome.usage)
             _warn_unknown_cost(run)
         if outcome.done:

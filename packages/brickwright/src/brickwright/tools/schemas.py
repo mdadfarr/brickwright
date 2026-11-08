@@ -63,6 +63,19 @@ class ValidateArgs(ToolArgs):
     """Create the build and run validity + custom checks. Returns a JSON report."""
 
 
+class AskExpertArgs(ToolArgs):
+    """When validate fails, ask a stronger model to work out the fix. Send this build's
+    record ID and the name of one failed check; code sends the expert the parts
+    around the problem. The reply is a list of exact edits (remove/add a part at a
+    position): apply them exactly, then validate. If the same check still fails,
+    call it again: the expert sees the new result."""
+
+    record_id: str = Field(
+        description="this build's record ID, as the validate reply gives it"
+    )
+    check: str = Field(description="the name of the failed check, like no_floating")
+
+
 class ExploreArgs(ToolArgs):
     """Run a short Python snippet for inspection only. The `bricklayer` package is in
     scope, and if the snippet reads `build`, build.py is run and its LegoBuild is

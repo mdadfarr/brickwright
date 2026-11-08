@@ -32,6 +32,20 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+@pytest.fixture(autouse=True)
+def no_real_llm_calls(request, monkeypatch):
+    """Tests never call a real model: litellm.completion raises unless the test
+    replaced it (or the run opted in with --run-real-agent)."""
+    if request.config.getoption("--run-real-agent"):
+        return
+    import litellm
+
+    def blocked(*args, **kwargs):
+        raise AssertionError("a test tried to call litellm.completion; script it")
+
+    monkeypatch.setattr(litellm, "completion", blocked)
+
+
 # ------- Creating records
 
 

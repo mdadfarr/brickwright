@@ -57,6 +57,10 @@ class RunTracker:
         """Fold one completion response's usage and cost into the totals."""
         self._usage_tracker.add(_usage_of(response))
 
+    def add_tool_usage(self, usage: Usage) -> None:
+        """Fold the usage of a tool's own model calls (ask_expert) into the run total."""
+        self._usage_tracker.add(usage)
+
     def add_subagent_usage(self, usage: Usage) -> None:
         """Fold a subagent's total usage into this run.
 

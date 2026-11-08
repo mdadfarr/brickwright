@@ -81,6 +81,7 @@ _TOOL_LOOK: dict[str, tuple[str, str]] = {
     "render": ("render", "cyan"),
     "finalize": ("finalize", "green"),
     "dispatch_subagents": ("dispatch", "black"),
+    "ask_expert": ("expert", "cyan"),
 }
 
 # How wide a one-line code/snippet gloss may get before it is clipped.
@@ -146,6 +147,8 @@ def _call_summary(name: str, arguments: dict[str, Any]) -> str:
         return f"{len(edits) if isinstance(edits, list) else 0} edits"
     if name == "explore":
         return _shorten(str(arguments.get("code", "")))
+    if name == "ask_expert":
+        return str(arguments.get("check", ""))
     if name == "dispatch_subagents":
         tasks = arguments.get("tasks")
         if not isinstance(tasks, list) or not tasks:

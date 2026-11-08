@@ -87,6 +87,13 @@ class Config(BaseModel):
     max_viewpoint_iterations: int = 6  # max render/adjust turns the agent gets
     viewpoint_model: str | None = None  # viewpoint agent model (None -> use ``model``)
     viewpoint_effort: Effort | None = None  # viewpoint effort (None -> use ``effort``)
+    # ask_expert, offered only when BRICKWRIGHT_EXPERT_CONTEXT is set: the model
+    # that works out the fix for a failed check, and the stronger rescue model that
+    # takes over after ``expert_max_tries`` fixes of the same problem did not work.
+    expert_model: str = "claude-sonnet-5-5"
+    expert_rescue_model: str = "claude-opus-5-5"
+    expert_max_tries: int = Field(default=5, ge=1)  # expert-model calls per problem
+    expert_max_rescues: int = Field(default=3, ge=0)  # rescue-model calls per run
 
     @property
     def can_dispatch_subagents(self) -> bool:
